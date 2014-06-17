@@ -1,0 +1,16 @@
+                                                                                   
+         _/        _/        _/  _/_/_/_/                      _/                   
+    _/_/_/    _/_/_/    _/_/_/  _/        _/_/_/      _/_/_/      _/_/_/      _/_/  
+ _/    _/  _/    _/  _/    _/  _/_/_/    _/    _/  _/    _/  _/  _/    _/  _/_/_/_/ 
+_/    _/  _/    _/  _/    _/  _/        _/    _/  _/    _/  _/  _/    _/  _/        
+ _/_/_/    _/_/_/    _/_/_/  _/_/_/_/  _/    _/    _/_/_/  _/  _/    _/    _/_/_/   
+                                                      _/                            
+                                                 _/_/                               
+
+	An implementation of OpenTK, a C# OpenGL library.
+
+	notes: left and right arrow keys rotate the totally awesome cube
+	
+Version 0.0
+-----------
+-version.... control?
