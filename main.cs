@@ -1,11 +1,13 @@
 ﻿//MS
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Drawing;
+using System.Drawing.Imaging;
 //others
 using OpenTK;
 using OpenTK.Platform;
@@ -14,13 +16,32 @@ using OpenTK.Graphics.OpenGL;
 //mine
 
 
+/* Notes: Change VBO structure; bind one vertex array, bind multiple element arrays with corresponding texture arrays.
+ * 
+ */
+
 namespace dddEngine
 {
     
     public class Test : GameWindow
     {
-        float angle;
+
+        //perspective declarations
+        Vector3 eye = new Vector3(0f, .2f, 1.3f);
+        Vector3 target = new Vector3(0f, .2f, 0f);
+        Vector3 up = new Vector3(0f, 1f, 0f);
+        //parametric variables for camera circling
+        float r = 0f;
+        float a1 = 0f;
+        float a2 = 0f;
+
+        // GLSL Objects
+        int VertexShaderObject, FragmentShaderObject, ProgramObject,TextureObject;
+
+        //note: should only have one vboID, several eboIDs with their numelems
         struct VertexBufferObj { public int vboID, eboID, numElems;}
+
+        // this is from a tutorial and patently stupid, Vector3 will suffice
         struct VertexPositionColor { public Vector3 position; public uint color;
             public VertexPositionColor(float x, float y, float z, Color c)
             {
@@ -33,36 +54,64 @@ namespace dddEngine
             }
         };
 
+        
+
         VertexBufferObj[] vbo = new VertexBufferObj[2];
 
-#region hardcoded declarations
-        VertexPositionColor[] CubeVerts = new VertexPositionColor[]{
-            new VertexPositionColor(-1.0f, -1.0f, 1.0f, Color.DarkBlue),
-            new VertexPositionColor(1.0f, -1.0f, 1.0f, Color.DarkRed),
-            new VertexPositionColor(1.0f,  1.0f, 1.0f, Color.DarkGreen),
-            new VertexPositionColor(-1.0f,  1.0f, 1.0f, Color.DarkGray),
-            new VertexPositionColor(-1.0f, -1.0f, -1.0f, Color.DarkOrange),
-            new VertexPositionColor(1.0f, -1.0f, -1.0f, Color.DarkSeaGreen),
-            new VertexPositionColor(1.0f,  1.0f, -1.0f, Color.DarkViolet),
-            new VertexPositionColor(-1.0f,  1.0f, -1.0f, Color.DarkTurquoise)
-        };
+        VertexPositionColor[] linkVerts;
+        uint[] elementsLink;
+        float[] texturecoordinates;
 
-        readonly short[] CubeElements = new short[]{
-            0, 1, 2, 2, 3, 0, // front face 2 tris
-            3, 2, 6, 6, 7, 3, // top face
-            7, 6, 5, 5, 4, 7, // back face
-            4, 0, 3, 3, 7, 4, // left face
-            0, 1, 5, 5, 4, 0, // bottom face
-            1, 5, 6, 6, 2, 1, // right face
-
-        };
-#endregion
-
-        public Test() : base(800, 600) { }
+        public Test() : base(800, 500) { }
 
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+
+            this.r = 1.5f;
+
+            this.a1 = (float)(Math.PI / 2f);
+            this.a2 = (float)(Math.PI / 2f);
+            eye = sphere2cart(r, a1, a2) + this.target;
+            //ObjFile goods = (new ObjFile(@"Z:\code\VSprojects\dddEngine\testmeshes\link_sb64\Link.obj"));
+            /* TEST */
+            ObjFile goods = (new ObjFile("Link.obj"));
+            /*
+            VertexBufferObj[] testVBOs = new VertexBufferObj[goods.facegroups.Count * 2];
+            for (int i = 0; i < testVBOs.Length; i++)
+            {
+                //uint[] uintface = new uint[];
+                testVBOs[i] = LoadVBO(goods.verts.ToArray, (goods.facegroups[i].faces));
+            }*/
+                //ObjFile goods = (new ObjFile("RB-OptimusBoss.obj"));
+                texturecoordinates = new float[goods.texcoordcount * 2];
+            for (int i = 0; i < goods.texcoordcount; i++)
+            {
+                texturecoordinates[2*i] = goods.texcoords[i][0];
+                texturecoordinates[2 * i+1] = goods.texcoords[i][1];
+            }
+
+                //add all vertices to VBO, then elements obj by obj
+                linkVerts = new VertexPositionColor[goods.vertcount];
+
+            for (int i = 0; i < goods.vertcount; i++)
+            {
+                
+                linkVerts[i]=new VertexPositionColor(goods.verts[i][0], goods.verts[i][1], goods.verts[i][2],Color.White);
+            }
+
+            elementsLink = new uint[goods.totaltris * 3];
+            int irregularCount = 0;
+            for(int i =0; i < goods.facegroups.Count;i++)
+            {
+                for (int j = 0; j < goods.facegroups[i].tris; j++)
+                {
+                    elementsLink[irregularCount*3 +0] = (uint)(goods.facegroups[i].faces[j][0] - 1);
+                    elementsLink[irregularCount*3 + 1] = (uint)(goods.facegroups[i].faces[j][1] - 1);
+                    elementsLink[irregularCount*3 +2] = (uint)(goods.facegroups[i].faces[j][2] - 1);
+                    irregularCount++;
+                }
+            }
 
             //version check
             Version version = new Version(GL.GetString(StringName.Version).Substring(0, 3));
@@ -72,13 +121,48 @@ namespace dddEngine
                 throw new NotSupportedException(String.Format(
                     "OpenGL {0} is required (you only have {1}).", target, version));
             }
+            /*
+            //texture lyfe bruh
+            GL.Enable(EnableCap.Texture2D);
+            int[] texIds = new int[goods.facegroups.Count];
+            GL.GenTextures(goods.facegroups.Count,texIds);
+            //GL.BindTextures()
 
-            GL.ClearColor(Color.FromArgb(25, 25, 25));
+            //bind textures in a loop, because i'm inefficient like that
+            string texPath = @"Z:\code\VSprojects\dddEngine\testmeshes\link_sb64\";
+            Bitmap bmpTemp;
+
+            string path = @"Z:\code\VSprojects\dddEngine\testmeshes\link_sb64\";
+            for(int i = 0; i < texIds.Length;i++){
+
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+               // GL.TexEnv()
+
+                texPath = path + goods.mtls[i].filename;
+                bmpTemp = new Bitmap(texPath);
+                GL.BindTexture(TextureTarget.Texture2D, i + 1);
+                BitmapData data = bmpTemp.LockBits(new System.Drawing.Rectangle(0, 0, bmpTemp.Width, bmpTemp.Height),
+                ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, data.Width, data.Height, 0,
+                OpenTK.Graphics.OpenGL.PixelFormat.Bgra, PixelType.UnsignedByte, data.Scan0);
+                
+                bmpTemp.UnlockBits(data);
+            }
+             * 
+            string vs=path + "shader.vert";
+            string fs=path+"shader.frag";
+            */
+            GL.ClearColor(Color.BlueViolet);
             GL.Enable(EnableCap.DepthTest);
 
-            vbo[0] = LoadVBO(CubeVerts, CubeElements);
-            vbo[1] = LoadVBO(CubeVerts, CubeElements);
-        }
+            
+
+            //CreateShaders(vs, fs, out VertexShaderObject, out FragmentShaderObject, out ProgramObject);
+
+            vbo[0] = LoadVBO(linkVerts, elementsLink);
+            vbo[1] = LoadVBO(linkVerts, elementsLink);
+        }//end ONLOAD
 
         protected override void OnUpdateFrame(FrameEventArgs e)
         {
@@ -87,9 +171,27 @@ namespace dddEngine
             if (Keyboard[OpenTK.Input.Key.Escape])
                 this.Exit();
             if (Keyboard[OpenTK.Input.Key.Left])
-                angle += 1;
+                a2 -= 0.2f;
             if (Keyboard[OpenTK.Input.Key.Right])
-                angle -= 1;
+                a2 += 0.2f;
+            if (Keyboard[OpenTK.Input.Key.Up])
+                a1 += 0.1f;
+            if (Keyboard[OpenTK.Input.Key.Down])
+                a1 -=0.1f;
+            if (Keyboard[OpenTK.Input.Key.S])
+            {
+                if (r > 1.3f)
+                    r -= 0.1f;
+            }
+            if (Keyboard[OpenTK.Input.Key.W])
+                r += 0.1f;
+            if (Keyboard[OpenTK.Input.Key.Space]){
+                r = 1.5f;
+                a1= (float)(Math.PI/2f);
+                a2 = (float)(Math.PI / 2f);
+            }
+            eye = sphere2cart(r, a1, a2) + target;
+            
         }
 
         protected override void OnRenderFrame(FrameEventArgs e)
@@ -98,11 +200,14 @@ namespace dddEngine
 
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-            Matrix4 lookat = Matrix4.LookAt(0, 5, 5, 0, 0, 0, 0, 1, 0);
+            GL.UseProgram(ProgramObject);
+
+            Matrix4 lookat = Matrix4.LookAt(eye, target, up);
             GL.MatrixMode(MatrixMode.Modelview);
             GL.LoadMatrix(ref lookat);
 
-            GL.Rotate(angle, 0.0f, 1.0f, 0.0f);
+            //GL.Disable(EnableCap.StencilTest);
+            //GL.Disable(EnableCap.Lighting);
 
             draw(vbo[0]);
 
@@ -121,7 +226,7 @@ namespace dddEngine
             GL.LoadMatrix(ref perpective);
         }
 
-        VertexBufferObj LoadVBO<TVertex>(TVertex[] vertices, short[] elements) where TVertex : struct
+        VertexBufferObj LoadVBO(VertexPositionColor[] vertices, uint[] elements)
         {
             VertexBufferObj handle = new VertexBufferObj();
             int size;
@@ -138,210 +243,133 @@ namespace dddEngine
 
             GL.GenBuffers(1, out handle.eboID);
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, handle.eboID);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, (IntPtr)(elements.Length * sizeof(short)), elements,
+
+            GL.BufferData(BufferTarget.ElementArrayBuffer, (IntPtr)(elements.Length * BlittableValueType.StrideOf(elements)), elements,
                 BufferUsageHint.StaticDraw);
             GL.GetBufferParameter(BufferTarget.ElementArrayBuffer, BufferParameterName.BufferSize, out size);
             //check elems
-            if (elements.Length * sizeof(short) != size)
-                throw new ApplicationException("jeez, elem data fudged up good");
+            if (elements.Length * sizeof(uint) != size)
+               throw new ApplicationException("jeez, elem data fudged up good");
             handle.numElems = elements.Length;
+            GL.BufferData(BufferTarget.TextureBuffer, (IntPtr)(BlittableValueType.StrideOf(texturecoordinates)), texturecoordinates, BufferUsageHint.StaticDraw);
 
             return handle;
-
         }
 
-        public static ObjFile loadOBJ(string location)
+        VertexBufferObj LoadVBO(Vector3[] vertices, uint[] elements)
         {
-            ObjFile result;
-            using (StreamReader sr = File.OpenText(location))
-            {
-                List<Vector3> vertices = new List<Vector3>();
-                List<float[]> texcoords = new List<float[]>();
-                List<Vector3> norms = new List<Vector3>();
-                int vertcount, texcoordcount, normcount, totaltris ;
-                List<string> groupnames = new List<string>();
-                List<string> usemtlnames = new List<string>();
-                short smooth = new short();
-                List<int> tricount = new List<int>();
-                List<List<int[]>> faceholder = new List<List<int[]>>();
-                string mtllib = "";
+            VertexBufferObj handle = new VertexBufferObj();
+            int size;
 
-                string s = "";
+            //1-gen handles 2-bind handle, upload data, check 3-repeat for elems
+            GL.GenBuffers(1, out handle.vboID);
+            GL.BindBuffer(BufferTarget.ArrayBuffer, handle.vboID);
+            GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)(vertices.Length * BlittableValueType.StrideOf(vertices)), vertices,
+                BufferUsageHint.StaticDraw);
+            GL.GetBufferParameter(BufferTarget.ArrayBuffer, BufferParameterName.BufferSize, out size);
+            //check
+            if (vertices.Length * BlittableValueType.StrideOf(vertices) != size)
+                throw new ApplicationException("Ya blew it, vertex data is boned");
 
-                //gather vertices
-                vertcount = 0 - 1;//placeholder so VS shuts the fuck up
-                while ((s = sr.ReadLine()) != null)
-                {
-                    string[] chunks = s.Split(' ');
-                    if (chunks[0].Equals("v"))
-                    {
-                        Vector3 temp = new Vector3(Convert.ToSingle(chunks[1]), Convert.ToSingle(chunks[2]), Convert.ToSingle(chunks[3]));
-                        vertices.Add(temp);
-                    }
-                    else if (chunks[0].Equals("mtllib"))
-                    {
-                        mtllib = chunks[1];
-                    }
-                    else if (chunks.Length > 2 && chunks[2].Equals("vertices"))
-                    {
-                        vertcount = Convert.ToInt32(chunks[1]);
-                        break;
-                    }
-                }
+            GL.GenBuffers(1, out handle.eboID);
+            GL.BindBuffer(BufferTarget.ElementArrayBuffer, handle.eboID);
 
-                //gather texture coords
-                texcoordcount = 0 - 1;//placeholder so VS shuts the fuck up
-                while ((s = sr.ReadLine()) != null)
-                {
-                    string[] chunks = s.Split(' ');
-                    if (chunks[0].Equals("vt"))
-                    {
-                        texcoords.Add(new float[] { Convert.ToSingle(chunks[1]), Convert.ToSingle(chunks[2]) });
-                    }
-                    else if (chunks.Length > 3 && chunks[2].Equals("texture") && chunks[3].Equals("coordinates"))
-                    {
-                        texcoordcount = Convert.ToInt32(chunks[1]);
-                        break;
-                    }
-                }
+            GL.BufferData(BufferTarget.ElementArrayBuffer, (IntPtr)(elements.Length * BlittableValueType.StrideOf(elements)), elements,
+                BufferUsageHint.StaticDraw);
+            GL.GetBufferParameter(BufferTarget.ElementArrayBuffer, BufferParameterName.BufferSize, out size);
+            //check elems
+            if (elements.Length * sizeof(uint) != size)
+                throw new ApplicationException("jeez, elem data fudged up good");
+            handle.numElems = elements.Length;
+            //GL.BufferData(BufferTarget.TextureBuffer, (IntPtr)(BlittableValueType.StrideOf(texturecoordinates)), texturecoordinates, BufferUsageHint.StaticDraw);
 
-                //gather normal vectors
-                normcount = 0 - 1;//placeholder so VS shuts the fuck up
-                while ((s = sr.ReadLine()) != null)
-                {
-                    string[] chunks = s.Split(' ');
-                    if (chunks[0].Equals("vn"))
-                    {
-                        norms.Add(new Vector3(Convert.ToSingle(chunks[1]), Convert.ToSingle(chunks[2]), Convert.ToSingle(chunks[3])));
-                    }
-                    else if (chunks.Length > 2 && chunks[2].Equals("normals"))
-                    {
-                        normcount = Convert.ToInt32(chunks[1]);
-                        break;
-                    }
-                }
-
-                //gather face groups
-                totaltris = 0 - 1;//placeholder
-                while ((s = sr.ReadLine()) != null)
-                {
-
-                    string[] chunks = s.Split(' ');
-                    if (chunks[0].Equals("g"))
-                    {
-                        List<int[]> faces = new List<int[]>();
-                        List<int[]> fts = new List<int[]>();
-                        List<int[]> fns = new List<int[]>();
-                        List<int[]> faceinfolist = new List<int[]>();
-       
-                        groupnames.Add(chunks[1]);
-                        //while in this face group
-                        while ((s = sr.ReadLine()) != null)
-                        {
-                            chunks = s.Split(' ');
-                            if (chunks[0].Equals("f"))
-                            {
-                                int[] faceinfo = faceString(chunks[1], chunks[2], chunks[3]);
-                                faceinfolist.Add(faceinfo);
-                                continue;
-                            }
-                            else if (chunks[0].Equals("usemtl"))
-                            {
-                                usemtlnames.Add(chunks[1]);
-                                continue;
-                            }
-                            else if (chunks[0].Equals("s"))
-                            {
-                                smooth = Convert.ToInt16(chunks[1]);
-                                continue;
-                            }
-                            else if (chunks[2].Equals("triangles") && chunks[3].Equals("in"))
-                            {
-                                tricount.Add(Convert.ToInt32(chunks[1]));
-
-
-                                //any other end of group activities
-                                for (int i = 0; i < faceinfolist.Count; i++)
-                                {
-                                    faces.Add(new int[3] { faceinfolist[i][0], faceinfolist[i][3], faceinfolist[i][6] });
-                                    fts.Add(new int[3] { faceinfolist[i][1], faceinfolist[i][4], faceinfolist[i][7] });
-                                    fns.Add(new int[3] { faceinfolist[i][2], faceinfolist[i][5], faceinfolist[i][8] });
-                                }
-                                faceholder.Add(faces);
-                                faceholder.Add(fts);
-                                faceholder.Add(fns);
-                                break;
-                            }
-                        }
-                        //if mtl count and group count not same, add filler mtl name
-                        if (groupnames.Count != usemtlnames.Count)
-                        {
-                            usemtlnames.Add("NO_MTL_SPECIFIED_ERROR");
-                        }
-                    }
-                    if (chunks.Length > 3 && chunks[2].Equals("triangles") && chunks[3].Equals("total"))
-                    {
-                        totaltris = Convert.ToInt32(chunks[1]);
-                        break;
-                    }
-                }
-
-
-                //create face group list
-                List<ObjFile.FaceGroup> facegs = new List<ObjFile.FaceGroup>();
-                for (int i = 0; i < groupnames.Count; i++)
-                {
-                    facegs.Add(new ObjFile.FaceGroup(groupnames[i], usemtlnames[i], tricount[i], faceholder[0 + i * 3], faceholder[1 + i * 3], faceholder[2 + i * 3]));
-                }
-                //throw it all in an object
-                result = new ObjFile(mtllib, vertices, norms, texcoords, facegs, vertcount, texcoordcount, normcount, totaltris, smooth);
-            }
-            return result;
-        }
-
-        private static int[] faceString(string s1, string s2,string s3)
-        {
-            int[] result = new int[9];
-            string[] s1str= s1.Split('/');
-            string[] s2str= s2.Split('/');
-            string[] s3str= s3.Split('/');
-            for (int i = 0; i < 3; i++)
-            {
-                result[0+i] = Convert.ToInt32(s1str[i]);
-                result[3+i] = Convert.ToInt32(s2str[i]);
-                result[6 + i] = Convert.ToInt32(s3str[i]);
-            }
-            return result;
+            return handle;
         }
 
         void draw(VertexBufferObj handle)
         {
+            //wireframe
+            GL.PolygonMode(MaterialFace.Front, PolygonMode.Fill);
+            GL.PolygonMode(MaterialFace.Back, PolygonMode.Line);
+            GL.PointSize(5f);
+
             //1- vertexarray client state enabled 2- bind buffer handles 3-set up data ptrs
             //4- call DrawElement
             GL.EnableClientState(ArrayCap.ColorArray);
             GL.EnableClientState(ArrayCap.VertexArray);
+            GL.EnableClientState(ArrayCap.TextureCoordArray);
 
             GL.BindBuffer(BufferTarget.ArrayBuffer, handle.vboID);
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, handle.eboID);
 
-            GL.VertexPointer(3, VertexPointerType.Float, BlittableValueType.StrideOf(CubeVerts), new IntPtr(0));
-            GL.ColorPointer(4, ColorPointerType.UnsignedByte, BlittableValueType.StrideOf(CubeVerts), new IntPtr(12));
+            GL.VertexPointer(3, VertexPointerType.Float, BlittableValueType.StrideOf(linkVerts), (IntPtr)(0));
+            GL.ColorPointer(4, ColorPointerType.UnsignedByte, BlittableValueType.StrideOf(linkVerts), new IntPtr(12));
+            GL.TexCoordPointer(2, TexCoordPointerType.Float, BlittableValueType.StrideOf(texturecoordinates), (IntPtr)(0));
 
-            GL.DrawElements(PrimitiveType.Triangles, handle.numElems, DrawElementsType.UnsignedShort, IntPtr.Zero);
+            GL.DrawElements(PrimitiveType.Triangles, handle.numElems, DrawElementsType.UnsignedInt, new IntPtr(0));
 
+            GL.ColorPointer(4,ColorPointerType.UnsignedByte,BlittableValueType.StrideOf(linkVerts),(IntPtr)(0));
+            GL.PolygonMode(MaterialFace.Front, PolygonMode.Line);
+            GL.LineWidth(2);
+            GL.DrawElements(PrimitiveType.Triangles,handle.numElems, DrawElementsType.UnsignedInt, new IntPtr(0));
         }
 
+        public Vector3 sphere2cart(float r, float a1, float a2)
+        {
+            float x=r*(float)(Math.Sin(a1)*Math.Cos(a2));
+            float z=r*(float)(Math.Sin(a1)*Math.Sin(a2));
+            float y=r*(float)(Math.Cos(a1));
+            Vector3 result = new Vector3(x,y,z);
+            return result;
+        }
 
+        #region CreateShaders -- stolen from opentk
+        
+        void CreateShaders(string vs, string fs,
+            out int vertexObject, out int fragmentObject,
+            out int program)
+        {
+            int status_code;
+            string info;
+
+            vertexObject = GL.CreateShader(ShaderType.VertexShader);
+            fragmentObject = GL.CreateShader(ShaderType.FragmentShader);
+
+            // Compile vertex shader
+            GL.ShaderSource(vertexObject, vs);
+            GL.CompileShader(vertexObject);
+            GL.GetShaderInfoLog(vertexObject, out info);
+            GL.GetShader(vertexObject, ShaderParameter.CompileStatus, out status_code);
+
+            if (status_code != 1)
+                throw new ApplicationException(info);
+
+            // Compile vertex shader
+            GL.ShaderSource(fragmentObject, fs);
+            GL.CompileShader(fragmentObject);
+            GL.GetShaderInfoLog(fragmentObject, out info);
+            GL.GetShader(fragmentObject, ShaderParameter.CompileStatus, out status_code);
+
+            if (status_code != 1)
+                throw new ApplicationException(info);
+
+            program = GL.CreateProgram();
+            GL.AttachShader(program, fragmentObject);
+            GL.AttachShader(program, vertexObject);
+
+            GL.LinkProgram(program);
+            GL.UseProgram(program);
+        }
+        
+        #endregion
+
+        
         [STAThread]
         public static void Main(string[] args){
-            //Utilities.SetWindowTitle(example);
-            ObjFile goods = (loadOBJ(@"Z:\code\VSprojects\OpenTK_testground\testmeshes\link_sb64\Link.obj"));
             using (Test example = new Test())
             {
                 example.Run(30.0, 0.0);
             }
         }//end main
-
-    }
-
-}
+    }//end class
+}//end namespace
